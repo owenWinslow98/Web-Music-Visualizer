@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+
+/* 修改antd global样式 */
+.ant-form-item-label > label {
+  color: #fafafa;
+}
