@@ -1,22 +1,22 @@
-import { useState } from 'react'
 import './App.css'
 import SidePanel from './components/SidePanel'
 import MainCanvas from './components/MainCanvas'
 import { FormProvider } from './context/formContext'
+import { GlobalProvider } from './context/globalContext'
 
 function App() {
-  const [count, setCount] = useState(0)
-
   return (
     <>
-      <FormProvider>
-        <div className='flex h-full'>
-          <div className='flex-1 h-full'>
-            <MainCanvas />
+      <GlobalProvider>
+        <FormProvider>
+          <div className='flex h-full'>
+            <div className='flex-1 h-full'>
+              <MainCanvas />
+            </div>
+            <SidePanel />
           </div>
-          <SidePanel />
-        </div>
-      </FormProvider>
+        </FormProvider>
+      </GlobalProvider>
     </>
   )
 }

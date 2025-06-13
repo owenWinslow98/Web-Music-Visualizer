@@ -1,6 +1,7 @@
 
 import React, { useRef, useEffect, useState, useImperativeHandle } from 'react';
 import { forwardRef } from 'react';
+import { useGlobal } from '../context/globalContext';
 
 export type AudioRefType = {
     getDOM: () => HTMLAudioElement | null
@@ -11,15 +12,14 @@ export type AudioRefType = {
 
 let hasPlayCallback = false;
 
-const AudioPlayer = forwardRef<AudioRefType, { audioUrl: string }>((props, ref) => {
+const AudioPlayer = forwardRef<AudioRefType, { audioUrl: string}>((props, ref) => {
     const { audioUrl, } = props;
     const audioRef = useRef<HTMLAudioElement>(null);
-    const [isPlaying, setIsPlaying] = useState(false);
+    const { isPlaying, setIsPlaying } = useGlobal()
     const [progress, setProgress] = useState(0);
     const [duration, setDuration] = useState(0);
     const [currentTime, setCurrentTime] = useState(0);
-
-
+    const {  volume, setVolume, gainNode } = useGlobal()
     useImperativeHandle(ref, () => {
         return {
             getDOM: () => audioRef.current,
@@ -99,28 +99,25 @@ const AudioPlayer = forwardRef<AudioRefType, { audioUrl: string }>((props, ref) 
     )
 
     /** 音量 */
-    const [volume, setVolume] = useState(0.5);
     const [isMuted, setIsMuted] = useState(false);
+    const gainVolume = gainNode.current?.gain.value || 0;
     const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const newVolume = parseFloat(e.target.value);
-        setVolume(newVolume);
-        if (audioRef.current) {
-            audioRef.current.volume = newVolume;
+        setVolume(newVolume)
+        if (gainNode.current) {
+            gainNode.current.gain.value = newVolume;
+            setIsMuted(newVolume === 0);
         }
-        if (newVolume === 0) {
-            setIsMuted(true);
-        } else {
-            setIsMuted(false);
-        }
+
     };
 
     const toggleMute = () => {
-        if (audioRef.current) {
+        if (audioRef.current && gainNode.current) {
             if (isMuted) {
-                audioRef.current.volume = volume;
+                gainNode.current.gain.value = volume;
                 setIsMuted(false);
             } else {
-                audioRef.current.volume = 0;
+                gainNode.current.gain.value = 0;
                 setIsMuted(true);
             }
         }
@@ -192,13 +189,14 @@ const AudioPlayer = forwardRef<AudioRefType, { audioUrl: string }>((props, ref) 
                     ref={audioRef}
                     className="hidden"
                     src={audioUrl}
+                    id='pixi-audio'
                     onEnded={() => setIsPlaying(false)}
                     onTimeUpdate={handleTimeUpdate}
                 />
                 <div
                     className="text-4xl transition-colors w-12 h-12  z-99 rounded-full cursor-pointer relative flex items-center justify-center"
                 >
-                    <div className='absolute top-0 left-0 inset-0 flex items-center justify-center' onClick={togglePlay}>{isPlaying ? <PauseIcon /> : <PlayIcon />}</div>
+                    <div className='absolute top-0 left-0 inset-0 flex items-center justify-center' id='audio-play-button' onClick={togglePlay}>{isPlaying ? <PauseIcon /> : <PlayIcon />}</div>
                 </div>
                 {/* 音量 */}
                 <div className="flex items-center gap-2 ml-2">
@@ -211,13 +209,13 @@ const AudioPlayer = forwardRef<AudioRefType, { audioUrl: string }>((props, ref) 
                             min="0"
                             max="1"
                             step="0.01"
-                            value={isMuted ? 0 : volume}
+                            value={isMuted ? 0 : gainVolume}
                             onChange={handleVolumeChange}
                             className=" w-full h-1 bg-[#ffffff] rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#ff4d4f] relative z-10"
                         />
                         <div
                             className="absolute h-1 bg-[#ff4d4f] rounded-full pointer-events-none left-0 top-1/2 -translate-y-1/2 z-11"
-                            style={{ width: `${(isMuted ? 0 : volume) * 100}%` }}
+                            style={{ width: `${(isMuted ? 0 : gainVolume) * 100}%` }}
                         />
                     </div>
                 </div>

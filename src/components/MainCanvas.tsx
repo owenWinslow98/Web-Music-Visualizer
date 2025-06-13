@@ -9,12 +9,11 @@ import {
     Ticker,
     Text
 } from 'pixi.js';
-import type { Application } from 'pixi.js';
-import { initPixi, backgroundSprite, majorSprite, audioVisualizerSprite, audioText as audioTextAttributes, bubblesTexture } from './PixiCanvas';
-import type { spriteAttributes, spriteMap } from './PixiCanvas';
+import { initPixi, backgroundSprite, majorSprite, audioTextSprite, audioVisualizerSprite, DustParticle } from './PixiCanvas';
+import type { spriteMap } from './PixiCanvas';
 import type { AudioRefType } from './AudioPlayer';
-import { Emitter } from '@barvynkoa/particle-emitter'
-import { analyzeAudio } from '../utils';
+import { mean } from 'lodash';
+import { useGlobal } from '../context/globalContext';
 const remToPx = (rem: number) => {
     return rem * parseFloat(getComputedStyle(document.documentElement).fontSize);
 }
@@ -28,20 +27,8 @@ const SIDEBAR_WIDTH = 350;
 const PADDING_WIDTH = getTailwindRemToPx(4) * 2;
 const MIN_WIDTH = 1440 - SIDEBAR_WIDTH - getTailwindRemToPx(1) - PADDING_WIDTH;
 
-const VISUALIZER_HEIGHT = 50
-const MIN_DB = -60
-const MAX_DB = 0
-
-const dBToHeight = (dB: number) => {
-    const clamped = Math.max(MIN_DB, Math.min(MAX_DB, dB));
-    const norm = (clamped - MIN_DB) / (MAX_DB - MIN_DB); // 映射到 0~1
-    // const curved = Math.pow(norm, 2); // 或 1.5、2、3，调整视觉感知
-    return norm * VISUALIZER_HEIGHT;
-}
-
 let smoothHeights = new Array(48).fill(0);
 let smoothedEnergy = 0; // 全局能量缓动值
-let energyPulse = 0;
 function lerpColor(c1: number, c2: number, t: number): number {
     const r1 = (c1 >> 16) & 0xff;
     const g1 = (c1 >> 8) & 0xff;
@@ -60,21 +47,14 @@ function lerpColor(c1: number, c2: number, t: number): number {
 const MainCanvas = () => {
     const { form } = useFormContext();
     const audioUrl = Form.useWatch('audioUrl', form);
-
+    const { pixiApp, gainNode, audioContext, audioSource, analyser } = useGlobal();
     const audioRef = useRef<AudioRefType>(null);
 
-    const pixiApp = useRef<{ app: Application, spriteMap: spriteMap }>(null)
     const [pixiAppReady, setPixiAppReady] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
 
     const [canvasWidth, setCanvasWidth] = useState(MIN_WIDTH);
-
-    const pixiCanvasRef = useRef<HTMLCanvasElement>(null)
-
-    const audioContext = useRef<AudioContext | null>(null);
-    const audioSource = useRef<MediaElementAudioSourceNode | null>(null);
-    const analyser = useRef<AnalyserNode | null>(null);
-
+    const pixiCanvasRef = useRef<HTMLCanvasElement>(null);
     const widthRef = useRef(canvasWidth);
 
     useEffect(() => {
@@ -92,36 +72,35 @@ const MainCanvas = () => {
             updateDimensions();
 
             window.addEventListener('resize', updateDimensions);
-            pixiApp.current = await initPixi(pixiCanvasRef.current as HTMLCanvasElement, containerRef.current as HTMLElement);
+            pixiApp.current = await initPixi(pixiCanvasRef.current as HTMLCanvasElement);
             setPixiAppReady(true);
-            resizeCanvasEl();
-            resizeEmitter();
-            // resizeAudioText();
 
             const ticker = pixiApp.current?.app.ticker;
-            const emitter = pixiApp.current?.spriteMap.get('emitter') as Emitter;
+            const dustList = pixiApp.current?.spriteMap.get('dustList') as DustParticle[]
             ticker.add(() => {
                 if (!audioRef.current?.isPlaying) return;
-                emitter.update(1 / 60);
+                dustList.forEach(item => item.update())
             })
             // 初始化音频上下文
             if (!audioContext.current) audioContext.current = new AudioContext();
             if (!analyser.current) analyser.current = audioContext.current.createAnalyser();
             const audioElement = audioRef.current?.getDOM();
             if (!audioSource.current) audioSource.current = audioContext.current.createMediaElementSource(audioElement as HTMLAudioElement);
-
+            if(!gainNode.current) gainNode.current = audioContext.current.createGain();
+            gainNode.current.gain.value = 0.5;
             // 建立正确的音频连接链
             if (audioSource.current) audioSource.current.connect(analyser.current);
-            if (analyser.current) analyser.current.connect(audioContext.current.destination);
-
+            if (analyser.current) analyser.current.connect(gainNode.current);
+            if (gainNode.current) gainNode.current.connect(audioContext.current.destination);
+            
+            
             const audioPlayCallback = () => {
                 if (audioContext.current?.state === 'suspended') {
                     audioContext.current?.resume();
                 }
             }
             audioRef.current?.addPlayCallback(audioPlayCallback)
-
-
+            drawVisualizer();
             return () => {
                 window.removeEventListener('resize', updateDimensions);
                 audioRef.current?.removePlayCallback(audioPlayCallback);
@@ -138,8 +117,14 @@ const MainCanvas = () => {
         if (backgroundImg && pixiApp.current) {
             const { spriteMap } = pixiApp.current
             const background = spriteMap.get('background') as Sprite
-            Assets.load(backgroundImg).then((result) => {
+            Assets.load({
+                src: backgroundImg,
+                loadParser: 'loadTextures',
+            }).then((result) => {
                 background.texture = result
+                const { width, height } = backgroundSprite
+                background.width = width
+                background.height = height
             })
         }
     }, [backgroundImg, pixiAppReady])
@@ -150,6 +135,13 @@ const MainCanvas = () => {
             const major = spriteMap.get('major') as Sprite
             Assets.load(majorUrl).then((result) => {
                 major.texture = result
+                Object.assign(major, majorSprite)
+                const majorMask = spriteMap.get('majorMask') as Graphics
+                majorMask.clear()
+                majorMask.fill()
+                    .circle(major.x + major.width / 2, major.y + major.height / 2, major.width / 2)
+                    .fill()
+                major.mask = majorMask
             })
         }
     }, [majorUrl, pixiAppReady])
@@ -163,40 +155,30 @@ const MainCanvas = () => {
             const audioText = spriteMap.get('audioText') as Text
             const str = `${songName} - ${authorName}`
             audioText.text = str;
-            resizeAudioText();
+            const { x, y } = audioTextSprite;
+            audioText.y = y;
+            audioText.x = x - audioText.width / 2;
         }
     }, [songName, authorName, pixiAppReady])
 
+    const resizeMajor = useCallback((scale: number) => {
+        const major = pixiApp.current?.spriteMap.get('major') as Sprite;
+        const graphics = pixiApp.current?.spriteMap.get('majorMask') as Graphics;
+        const { width, height } = majorSprite;
+        major.width = width * scale;
+        major.height = height * scale;
+        major.x = 1920 / 2 - major.width / 2;
+        major.y = 1080 / 2 - height - ((height * scale - height) / 2);
 
-    const spriteResize = useCallback((canvasWidth: number, sprite: Sprite, attributes: spriteAttributes) => {
-        const { xPercent, yPercent, widthPercent, heightPercent } = attributes;
-        sprite.x = canvasWidth * xPercent;     // xPercent: 0.0 ~ 1.0
-        sprite.y = canvasWidth * yPercent;
-        sprite.width = canvasWidth * widthPercent;
-        sprite.height = canvasWidth * heightPercent;
+        graphics.clear();
+        graphics.fill();
+        graphics.circle(major.x + major.width / 2, major.y + major.height / 2, major.width / 2);
+        graphics.fill();
     }, [])
-
     const tickerEventTemp = useRef<() => void | null>(null);
-    const resizeCanvasEl = useCallback(() => {
+    const drawVisualizer = useCallback(() => {
         if (pixiApp.current) {
             const { spriteMap } = pixiApp.current as { spriteMap: spriteMap }
-            const background = spriteMap.get('background') as Sprite
-            const major = spriteMap.get('major') as Sprite
-            const width = widthRef.current;
-            spriteResize(width, background, backgroundSprite)
-            spriteResize(width, major, majorSprite)
-            // major resize
-            const { xPercent, yPercent, widthPercent, heightPercent } = majorSprite;
-            const centerX = (xPercent + widthPercent / 2) * width;
-            const centerY = (yPercent + heightPercent / 2) * width;
-            const radius = (widthPercent / 2) * width;
-
-            const majorMask = spriteMap.get('majorMask') as Graphics;
-            majorMask.clear();
-            majorMask.fill()
-                .circle(centerX, centerY, radius)
-                .fill();
-            major.mask = majorMask;
 
             // 设置分析器参数
             if (!analyser.current) return;
@@ -210,21 +192,27 @@ const MainCanvas = () => {
             }
             const callback = () => {
                 if (!audioRef.current?.isPlaying) return;
-            
                 analyser.current?.getFloatFrequencyData(dataArray);
-            
+                /* particle speed */
+                const average = mean(dataArray)
+                const energy = Math.pow(10, average / 10) * 10000 * 100000
+                DustParticle.speed = energy < 0 ? 1 : energy;
+
+                /* major speed */
+                resizeMajor(1 + 0.2 * 0.01 * energy);
+                
                 const audioVisualizer = spriteMap.get('audioVisualizer') as Graphics;
                 audioVisualizer.clear();
-            
-                const { xPercent, yPercent, widthPercent } = audioVisualizerSprite;
-                const centerX = xPercent * width;
-                const centerY = yPercent * width;
-                const baseRadius = widthPercent * width;
-            
+
+                const { x, y, width } = audioVisualizerSprite;
+                const centerX = x;
+                const centerY = y;
+                const baseRadius = width * (1 + 0.2 * 0.01 * energy);
+
                 const numBars = 48;
                 const binsPerBar = Math.floor(bufferLength / numBars);
                 const angleStep = (Math.PI * 2) / numBars;
-            
+
                 // 1. 计算频谱能量平均值（用于整体放大）
                 let totalEnergy = 0;
                 for (let i = 0; i < bufferLength; i++) {
@@ -233,7 +221,7 @@ const MainCanvas = () => {
                 const avgEnergy = totalEnergy / bufferLength / 100; // 归一化 [0,1]
                 smoothedEnergy += (avgEnergy - smoothedEnergy) * 0.05;
                 const dynamicRadius = baseRadius * (1 + smoothedEnergy * 0.4); // 外扩系数最多+40%
-            
+
                 for (let i = 0; i < numBars; i++) {
                     // 2. 频段平均值
                     let sum = 0;
@@ -244,20 +232,20 @@ const MainCanvas = () => {
                     const avgDb = sum / binsPerBar;
                     const norm = Math.max(0, (avgDb + 100) / 100); // 映射到 [0,1]
                     const targetHeight = Math.pow(norm, 1.5) * baseRadius * 0.7;
-            
+
                     // 3. 平滑柱高
                     smoothHeights[i] += (targetHeight - smoothHeights[i]) * 0.2;
-            
+
                     // 4. 极坐标位置计算
                     const angle = i * angleStep;
                     const innerX = centerX + Math.cos(angle) * dynamicRadius;
                     const innerY = centerY + Math.sin(angle) * dynamicRadius;
                     const outerX = centerX + Math.cos(angle) * (dynamicRadius + smoothHeights[i]);
                     const outerY = centerY + Math.sin(angle) * (dynamicRadius + smoothHeights[i]);
-            
+
                     // 5. 颜色渐变（蓝 → 红）
                     const color = lerpColor(0x00cfff, 0xff0055, i / numBars);
-            
+
                     // 6. 绘制柱子
                     audioVisualizer.setStrokeStyle({ width: 2.2, color });
                     audioVisualizer.moveTo(innerX, innerY);
@@ -270,42 +258,11 @@ const MainCanvas = () => {
         }
     }, [])
 
-    const resizeEmitter = useCallback(() => {
-        if (pixiApp.current) {
-            const { spriteMap } = pixiApp.current as { spriteMap: spriteMap }
-            const width = widthRef.current;
-            const emitter = spriteMap.get('emitter') as Emitter;
-            const {xPercent, yPercent} = bubblesTexture;
-            emitter.updateOwnerPos(width * xPercent, width * yPercent);
-            // emitter.updateSpawnPos(-width / 4, 0);
-            const spawnBehavior = emitter.getBehavior('spawnShape');
-            if (spawnBehavior) {
-                const spawn = spawnBehavior as unknown as { shape: { w: number, x: number } };
-                spawn.shape.w = width;
-            }
-            const scaleBehavior = emitter.getBehavior('scale');
-            if (scaleBehavior) {
-                const scale = scaleBehavior as unknown as { minMult: number }
-                scale.minMult = width / 1920;
-            }
-        }
-    }, [])
-
-    const resizeAudioText = useCallback(() => {
-        if (pixiApp.current) {
-            const { spriteMap } = pixiApp.current as { spriteMap: spriteMap }
-            const audioText = spriteMap.get('audioText') as Text
-            const width = widthRef.current;
-            const { xPercent, yPercent } = audioTextAttributes;
-            audioText.y = width * yPercent;
-            audioText.x = width * xPercent - audioText.width / 2;
-        }
-    }, [])
     useEffect(() => {
         widthRef.current = canvasWidth;
-        resizeCanvasEl();
-        resizeEmitter();
-        resizeAudioText();
+        const canvas = pixiCanvasRef.current as HTMLCanvasElement;
+        canvas.style.width = `${canvasWidth}px`;
+        canvas.style.height = `${canvasWidth * 9 / 16}px`;
     }, [canvasWidth])
 
 

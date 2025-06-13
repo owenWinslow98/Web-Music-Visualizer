@@ -1,11 +1,11 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Button, Form, Input, Upload, Image } from 'antd';
 import type { UploadChangeParam } from 'antd/lib/upload';
 import ImgCrop from 'antd-img-crop';
 import { TikTokOutlined, PlusOutlined } from '@ant-design/icons';
-import { useFormContext } from '../context/formContext';
-import type { FieldType } from '../context/formContext';
-import { resizeUrlImageTo1920x1080Base64 } from '../utils';
+import { useFormContext } from '../../context/formContext';
+import type { FieldType } from '../../context/formContext';
+import VideoGenerate from './components/VideoGenerate';
 const SidePanel = () => {
     const { form, resetForm, initialValues } = useFormContext()
     const onMusicUpload = (info: UploadChangeParam) => {
@@ -21,24 +21,27 @@ const SidePanel = () => {
     const onMajorImgUpload = (info: UploadChangeParam) => {
         const { file } = info;
         const rawFile = file.originFileObj as Blob;
-      
+
         const reader = new FileReader();
         reader.readAsDataURL(rawFile);
         reader.onload = () => {
-          const base64 = reader.result as string;
-          form.setFieldsValue({
-            majorImg: base64,
-          });
+            const base64 = reader.result as string;
+            form.setFieldsValue({
+                majorImg: base64,
+            });
         };
-      };
+    };
 
     const onBackgroundImgUpload = async (info: UploadChangeParam) => {
-        const { file } = info
-        const base64 = await resizeUrlImageTo1920x1080Base64(URL.createObjectURL(file.originFileObj as Blob));
+        const { file } = info;
+        const blobUrl = URL.createObjectURL(file.originFileObj as Blob);
+
         form.setFieldsValue({
-            backgroundImg: base64,
-        })
-    }
+            backgroundImg: blobUrl,
+        });
+    };
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    
     /**
      * 音频输入框
      * @param props 
@@ -93,7 +96,7 @@ const SidePanel = () => {
                         label="Audio"
                         name="audioName"
                     >
-                    <AudioFormItemInput onChange={onMusicUpload} />
+                        <AudioFormItemInput onChange={onMusicUpload} />
                     </Form.Item>
                     <Form.Item<FieldType>
                         label="Author"
@@ -105,13 +108,9 @@ const SidePanel = () => {
                     <Form.Item<FieldType> label="Song Name" name="songName">
                         <Input />
                     </Form.Item>
-
-                    {/* <Form.Item label="Major Image" name="majorImg">
-                        <ImageFormItemInput onChange={onMajorImgUpload} listType='picture' cropShape='round' aspect={1 / 1} />
-                    </Form.Item> */}
                     <Form.Item label="Major Image" name="majorImg">
                         <ImageFormItemInput onChange={onMajorImgUpload} listType='picture' cropShape='round' aspect={1 / 1} />
-                        
+
                     </Form.Item>
                     <Form.Item label="Background Image" name="backgroundImg">
                         <ImageFormItemInput onChange={onBackgroundImgUpload} listType='picture' cropShape='rect' aspect={16 / 9} />
@@ -123,8 +122,9 @@ const SidePanel = () => {
 
                 <div className='flex justify-end'>
                     <Button className='mr-4' onClick={resetForm}>RESET</Button>
-                    <Button color="danger" variant="solid" onClick={() => console.log(form.getFieldsValue())}>EXPORT VIDEO</Button></div>
+                    <Button color="danger" variant="solid" onClick={() => setIsModalOpen(true)}>EXPORT VIDEO</Button></div>
             </div>
+            <VideoGenerate open={isModalOpen}  onOpenChange={setIsModalOpen}  />
         </div>
     );
 };

@@ -3,7 +3,6 @@ import { Form } from 'antd';
 import lemonAudio from '../assets/lemon.mp3';
 import majorImg from '../../public/major-img.png';
 import backgroundImg from '../../public/background.jpg';
-import * as StackBlur from 'stackblur-canvas';
 export type FieldType = {
     audioUrl: string;
     audioName: string;

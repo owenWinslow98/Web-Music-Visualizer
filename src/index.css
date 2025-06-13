@@ -2,6 +2,17 @@
 
 
 /* 修改antd global样式 */
-.ant-form-item-label > label {
+.ant-form-item-label>label {
+  color: #fafafa;
+}
+
+.ant-modal-close-x,
+.ant-modal-title {
+  color: #fafafa;
+}
+.ant-radio-label {
+  color: #fafafa;
+}
+.ant-input-disabled{
   color: #fafafa;
 }
